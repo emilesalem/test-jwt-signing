@@ -21,43 +21,41 @@ func (w Worker) sign() {
 }
 
 type WorkerPool struct {
-	work             chan struct{}
-	workers          chan Worker
-	remove           chan struct{}
-	workMonitor      chan int
-	workDone         chan int64
-	avgWorkTime      float64
-	worked           int64
-	inflightRequests int
-	totalRequested   int
-	workForce        []Worker
-	removedWorkers   int
-	addedWorkers     int
-	maxPressure      int
+	work            chan struct{}
+	workers         chan Worker
+	remove          chan struct{}
+	workloadMonitor chan int
+	workMonitor     chan int64
+	avgWorkTime     float64
+	worked          int64
+	workload        int
+	workForce       []Worker
+	removedWorkers  int
+	addedWorkers    int
+	maxPressure     int
 }
 
 func createWorkerPool() *WorkerPool {
 
 	return &WorkerPool{
-		work:             make(chan struct{}),
-		workers:          make(chan Worker),
-		workMonitor:      make(chan int),
-		remove:           make(chan struct{}),
-		workDone:         make(chan int64),
-		workForce:        make([]Worker, 0, 1000),
-		avgWorkTime:      0,
-		worked:           0,
-		inflightRequests: 0,
-		totalRequested:   0,
-		removedWorkers:   0,
-		addedWorkers:     0,
-		maxPressure:      5000,
+		work:            make(chan struct{}),
+		workers:         make(chan Worker),
+		workloadMonitor: make(chan int),
+		remove:          make(chan struct{}),
+		workMonitor:     make(chan int64),
+		workForce:       make([]Worker, 0, 1000),
+		avgWorkTime:     0,
+		worked:          0,
+		workload:        0,
+		removedWorkers:  0,
+		addedWorkers:    0,
+		maxPressure:     5000,
 	}
 }
 
 func (w *WorkerPool) addWork() {
 	w.work <- struct{}{}
-	w.workMonitor <- 1
+	w.workloadMonitor <- 1
 }
 
 func (w *WorkerPool) addWorker() {
@@ -78,25 +76,33 @@ func (w *WorkerPool) removeWorker() {
 	w.removedWorkers++
 }
 
-func (w *WorkerPool) countWork() {
-	for x := range w.workDone {
+func (w *WorkerPool) monitorWork() {
+	for x := range w.workMonitor {
 		w.worked++
 		w.avgWorkTime = (w.avgWorkTime*float64(w.worked-1) + float64(x)) / float64(w.worked)
-		w.workMonitor <- -1
+		w.workloadMonitor <- -1
 	}
 }
 
-func (w *WorkerPool) monitorWork() {
-	for x := range w.workMonitor {
-		w.inflightRequests += x
+func (w *WorkerPool) monitorWorkload() {
+	for {
+		select {
+		case x := <-w.workloadMonitor:
+			w.workload += x
+		case <-time.Tick(time.Millisecond):
+			if w.workload > w.maxPressure {
+				w.addWorker()
+			} else {
+				w.removeWorker()
+			}
+		}
 	}
 }
 
 func (w *WorkerPool) start() {
 	go w.addWorker()
-	go w.checkWorkRate()
-	go w.countWork()
 	go w.monitorWork()
+	go w.monitorWorkload()
 	for worker := range w.workers {
 		go func(worker Worker) {
 		loop:
@@ -105,7 +111,7 @@ func (w *WorkerPool) start() {
 				case <-w.work:
 					start := time.Now()
 					worker.sign()
-					w.workDone <- time.Since(start).Nanoseconds()
+					w.workMonitor <- time.Since(start).Nanoseconds()
 				case <-worker.ctx.Done():
 					break loop
 				}
@@ -114,19 +120,9 @@ func (w *WorkerPool) start() {
 	}
 }
 
-func (w *WorkerPool) checkWorkRate() {
-	for range time.Tick(time.Millisecond) {
-		if w.inflightRequests > w.maxPressure {
-			w.addWorker()
-		} else {
-			w.removeWorker()
-		}
-	}
-}
-
 func main() {
 	// rate of signing requests per milliseconds
-	milliRate := 1
+	milliRate := 1000
 
 	// duration of the test
 	elapsed := 2 * time.Second
@@ -135,17 +131,20 @@ func main() {
 
 	go p.start()
 
+	totalRequested := 0
+
 	end := time.After(elapsed)
+
 	for range time.Tick(1 * time.Millisecond) {
 		select {
 		case <-end:
-			fmt.Printf("signed %v times in %v seconds, requested %v signatures\naverage work time: %v nanoseconds\n", p.worked, elapsed, p.totalRequested, int(p.avgWorkTime))
-			fmt.Printf("had to add %v workers and remove %v\n", p.addedWorkers, p.removedWorkers)
+			fmt.Printf("signed %v times in %v seconds, requested %v signatures\naverage work time: %v nanoseconds\n", p.worked, elapsed, totalRequested, int(p.avgWorkTime))
+			fmt.Printf("workers added:%v, removed: %v\n", p.addedWorkers, p.removedWorkers)
 			os.Exit(0)
 		default:
 			for i := 0; i < milliRate; i++ {
 				go p.addWork()
-				p.totalRequested++
+				totalRequested++
 			}
 		}
 	}
