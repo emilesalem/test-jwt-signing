@@ -34,13 +34,6 @@ func main() {
 			totalSigned++
 		}
 	}()
-	requested := make(chan struct{})
-	totalSent := 0
-	go func() {
-		for range requested {
-			totalSent++
-		}
-	}()
 	for i := 1; i <= workerPool; i++ {
 		go func() {
 			for range workerChan {
@@ -49,6 +42,7 @@ func main() {
 			}
 		}()
 	}
+	totalSent := 0
 	end := time.After(elapsed)
 	for range time.Tick(1 * time.Millisecond) {
 		select {
@@ -57,7 +51,7 @@ func main() {
 			os.Exit(0)
 		default:
 			for i := 0; i < milliRate; i++ {
-				requested <- struct{}{}
+				totalSent++
 				workerChan <- struct{}{}
 			}
 		}
