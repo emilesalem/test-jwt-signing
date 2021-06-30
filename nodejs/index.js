@@ -2,10 +2,10 @@ const { Worker, isMainThread, workerData, parentPort } = require('worker_threads
 
 if (isMainThread) {
   // duration of the test
-  const elpased = 10;
+  const elapsed = 2;
 
   // rate of signing requests per milliseconds
-  const milliRate = 500;
+  const milliRate = 1000;
 
   const worker = new Worker(__filename);
 
@@ -17,16 +17,16 @@ if (isMainThread) {
   let totalSent = 0;
 
   setInterval(() => {
-    totalSent += milliRate;
     for (let i = 0; i < milliRate; i++) {
       worker.postMessage('go');
     }
+    totalSent += milliRate;
   }, 1);
 
   setTimeout(() => {
-    console.log(`signed ${totalSigned} times in ${elpased} seconds, requested ${totalSent} signatures`);
+    console.log(`signed ${totalSigned} times in ${elapsed} seconds, requested ${totalSent} signatures`);
     process.exit(0);
-  }, elpased * 1000);
+  }, elapsed * 1000);
 
   return;
 }
