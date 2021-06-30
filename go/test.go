@@ -36,6 +36,23 @@ func producer(ctx context.Context, w *sync.WaitGroup) chan struct{} {
 	return jobs
 }
 
+func monitorJobs(ctx context.Context, doneJobs chan time.Duration, w *sync.WaitGroup) {
+	var jobsDone int64
+	var avgWorkTime int64
+	for {
+		select {
+		case timeWorked := <-doneJobs:
+			jobsDone++
+			avgWorkTime = int64((float64(avgWorkTime*(jobsDone-1) + int64(timeWorked))) / float64(jobsDone))
+		case <-ctx.Done():
+			fmt.Printf("signed requests: %v\n", jobsDone)
+			fmt.Printf("average time to sign: %s\n", time.Duration(avgWorkTime))
+			w.Done()
+			return
+		}
+	}
+}
+
 func main() {
 
 	// duration of the test
@@ -43,33 +60,19 @@ func main() {
 
 	deadline := time.Now().Add(elapsed)
 
-	mainCtx, cancel := context.WithDeadline(context.Background(), deadline)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 
 	var w sync.WaitGroup
 
 	w.Add(1)
-	jobs := producer(mainCtx, &w)
+	jobs := producer(ctx, &w)
 
 	doneJobs := make(chan time.Duration)
 
 	w.Add(1)
-	go func() {
-		jobsDone := 0
-		var avgWorkTime time.Duration
-		for {
-			select {
-			case timeWorked := <-doneJobs:
-				jobsDone++
-				avgWorkTime = time.Duration(int64((float64(avgWorkTime)*float64(jobsDone-1) + float64(timeWorked)) / float64(jobsDone)))
-			case <-mainCtx.Done():
-				fmt.Printf("signed requests: %v\n", jobsDone)
-				fmt.Printf("average time to sign: %vmicroseconds\n", avgWorkTime.Microseconds())
-				w.Done()
-				return
-			}
-		}
-	}()
+	go monitorJobs(ctx, doneJobs, &w)
+
 	for range jobs {
 		go func() {
 			s := time.Now()
@@ -78,5 +81,6 @@ func main() {
 			doneJobs <- t
 		}()
 	}
+	close(doneJobs)
 	w.Wait()
 }
